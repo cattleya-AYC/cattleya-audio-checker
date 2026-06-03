@@ -1,20 +1,10 @@
-import { resolve } from 'node:path';
-import { defineConfig } from 'vite';
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
 
 export default defineConfig({
-  build: {
-    target: 'es2015',
-    lib: {
-      entry: resolve(__dirname, 'index.js'),
-      name: 'psl',
-      formats: ['es', 'cjs', 'umd'],
-      fileName: format => (
-        format === 'umd'
-          ? 'psl.umd.cjs'
-          : format === 'cjs'
-            ? 'psl.cjs'
-            : 'psl.mjs'
-      ),
-    },
-  },
-});
+  plugins: [react()],
+  server: {
+    port: 3000,
+    open: true
+  }
+})

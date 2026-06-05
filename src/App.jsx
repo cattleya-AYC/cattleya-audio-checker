@@ -2,7 +2,15 @@ import React, { useState } from 'react';
 import { Upload, Play, Zap, CheckCircle, AlertCircle, Copy, Link2 } from 'lucide-react';
 
 export default function AudioTextChecker() {
-  const [apiKey, setApiKey] = useState('');
+  const [apiKey, setApiKey] = useState(() => {
+    // アプリ起動時に localStorage から復元
+    try {
+      const saved = localStorage.getItem('openai_api_key');
+      return saved || '';
+    } catch {
+      return '';
+    }
+  });
   const [googleDriveLink, setGoogleDriveLink] = useState('');
   const [audioFile, setAudioFile] = useState(null);
   const [audioFileName, setAudioFileName] = useState('');
@@ -14,6 +22,33 @@ export default function AudioTextChecker() {
   const [showDiff, setShowDiff] = useState(false);
   const [wordDifferences, setWordDifferences] = useState([]);
   const [wordTimestamps, setWordTimestamps] = useState([]);
+  const [markedTextSegments, setMarkedTextSegments] = useState([]);
+  const [showTimeSegments, setShowTimeSegments] = useState(false);
+
+  // API キーを localStorage に保存
+  const handleApiKeyChange = (e) => {
+    const key = e.target.value;
+    setApiKey(key);
+    try {
+      if (key.trim()) {
+        localStorage.setItem('openai_api_key', key);
+      } else {
+        localStorage.removeItem('openai_api_key');
+      }
+    } catch {
+      console.error('localStorage に保存できません');
+    }
+  };
+
+  // API キーをクリア
+  const clearApiKey = () => {
+    setApiKey('');
+    try {
+      localStorage.removeItem('openai_api_key');
+    } catch {
+      console.error('localStorage から削除できません');
+    }
+  };
 
   const extractFileId = (url) => {
     const patterns = [
@@ -235,11 +270,80 @@ export default function AudioTextChecker() {
     return differences;
   };
 
-  // 時間フォーマット (秒 -> MM:SS)
-  const formatTime = (seconds) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  // 文字単位で差分を検出してマーク
+  const calculateCharDifferences = (refText, recText) => {
+    const refChars = refText.split('');
+    const recChars = recText.split('');
+
+    // 簡単な文字ごとの比較（LCS の代わりにシンプルな実装）
+    let refIdx = 0;
+    let recIdx = 0;
+    const diffs = [];
+
+    // 認識テキストの各文字に対して、元テキストでの対応位置を探す
+    for (let i = 0; i < recChars.length; i++) {
+      let found = false;
+
+      // 前後10文字の範囲で同じ文字を探す
+      for (let j = Math.max(0, refIdx - 5); j < Math.min(refChars.length, refIdx + 15); j++) {
+        if (recChars[i] === refChars[j]) {
+          refIdx = j + 1;
+          found = true;
+          break;
+        }
+      }
+
+      if (!found) {
+        // 該当する文字が見つからない = 誤認識
+        diffs.push({ idx: i, char: recChars[i], type: 'extra' });
+      }
+    }
+
+    return diffs;
+  };
+
+  // マーク付きテキストを生成
+  const markDifferencesInText = (text, diffs) => {
+    const chars = text.split('');
+    const markedChars = chars.map((char, idx) => {
+      const isDiff = diffs.some(d => d.idx === idx);
+      if (isDiff) {
+        return `<span style="color:red;font-weight:bold;">${char}</span>`;
+      }
+      return char;
+    });
+
+    return markedChars.join('');
+  };
+
+  // テキストを時間で 60 分割
+  const divideTextByTime = (text, totalDurationSeconds, timestamps) => {
+    const segments = [];
+    const segmentDuration = totalDurationSeconds / 60; // 60 分割
+
+    let currentPos = 0;
+    let totalChars = text.length;
+    const charsPerSegment = Math.ceil(totalChars / 60);
+
+    for (let i = 0; i < 60; i++) {
+      const startTime = i * segmentDuration;
+      const endTime = (i + 1) * segmentDuration;
+      const segmentStartIdx = i * charsPerSegment;
+      const segmentEndIdx = Math.min((i + 1) * charsPerSegment, totalChars);
+
+      const segmentText = text.substring(segmentStartIdx, segmentEndIdx);
+
+      if (segmentText.trim()) {
+        segments.push({
+          segmentNum: i + 1,
+          startTime,
+          endTime,
+          text: segmentText
+        });
+      }
+    }
+
+    return segments;
   };
 
   const highlightDifferences = () => {
@@ -327,6 +431,18 @@ export default function AudioTextChecker() {
       const diffs = extractWordDifferences(referenceText, transcribed, words);
       setWordDifferences(diffs);
 
+      // 🆕 文字単位の差分を検出
+      const charDiffs = calculateCharDifferences(referenceText, transcribed);
+      
+      // 🆕 認識テキストにマークを付ける
+      const markedText = markDifferencesInText(transcribed, charDiffs);
+      
+      // 🆕 マーク付きテキストを時間で 60 分割
+      const duration = data.duration || 60; // デフォルト 60 秒
+      const segments = divideTextByTime(markedText, duration, words);
+      setMarkedTextSegments(segments);
+      setShowTimeSegments(true);
+
       const similarity = calculateSimilarity(referenceText, transcribed);
       setMatchPercentage(similarity);
       setShowDiff(true);
@@ -364,15 +480,26 @@ export default function AudioTextChecker() {
           <label className="block text-sm font-semibold text-slate-700 mb-2">
             OpenAI API キー
           </label>
-          <input
-            type="password"
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            placeholder="sk-..."
-            className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none transition text-sm"
-          />
+          <div className="flex gap-2">
+            <input
+              type="password"
+              value={apiKey}
+              onChange={handleApiKeyChange}
+              placeholder="sk-..."
+              className="flex-1 px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none transition text-sm"
+            />
+            {apiKey && (
+              <button
+                onClick={clearApiKey}
+                className="px-4 py-3 bg-red-50 hover:bg-red-100 text-red-700 font-semibold rounded-lg transition text-sm"
+              >
+                クリア
+              </button>
+            )}
+          </div>
           <p className="text-xs text-slate-500 mt-2">
             🔒 APIキーはローカルに保存され、送信されません
+            {apiKey && <span className="ml-2">✅ 保存済み</span>}
           </p>
         </div>
 
@@ -499,6 +626,35 @@ export default function AudioTextChecker() {
             </div>
 
             {/* 🆕 差分 + タイムスタンプ一覧 */}
+            {/* 🆕 タイム別テキスト（マーク付き） */}
+            {showTimeSegments && markedTextSegments.length > 0 && (
+              <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+                <h3 className="text-sm font-semibold text-slate-700 mb-4">
+                  🕐 タイム別テキスト（違い箇所は赤でマーク）
+                </h3>
+                <div className="space-y-3 max-h-96 overflow-y-auto">
+                  {markedTextSegments.map((segment, idx) => (
+                    <div
+                      key={idx}
+                      className="bg-gradient-to-r from-slate-50 to-blue-50 p-4 rounded border border-slate-200"
+                    >
+                      <div className="text-xs font-semibold text-slate-600 mb-2">
+                        ⏱️ {formatTime(segment.startTime)} - {formatTime(segment.endTime)}
+                      </div>
+                      <div className="text-sm text-slate-700 leading-relaxed">
+                        <div
+                          dangerouslySetInnerHTML={{ __html: segment.text }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-xs text-slate-500 mt-4">
+                  📌 テキスト全体を 60 分割。赤い文字 = 元のテキストに存在しない（誤認識または追加）
+                </p>
+              </div>
+            )}
+
             {wordDifferences.length > 0 && (
               <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
                 <h3 className="text-sm font-semibold text-slate-700 mb-4">

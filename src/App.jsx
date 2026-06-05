@@ -165,27 +165,58 @@ export default function AudioTextChecker() {
     return matrix[b.length][a.length];
   };
 
-  // 単語レベルの差分を抽出
+  // 単語レベルの差分を抽出（Levenshtein距離で部分一致も検出）
   const extractWordDifferences = (refText, recText, timestamps) => {
     const refWords = normalizeText(refText).split(' ').filter(w => w);
     const recWords = normalizeText(recText).split(' ').filter(w => w);
 
     const differences = [];
-
-    // 簡単な単語マッチング（より高度なロジックは後で改善可能）
     let recIdx = 0;
+
     for (let refIdx = 0; refIdx < refWords.length; refIdx++) {
-      if (recIdx < recWords.length && refWords[refIdx] === recWords[recIdx]) {
-        // マッチした
-        recIdx++;
-      } else {
-        // マッチしなかった - 元のテキストにはあるが認識されていない
-        differences.push({
-          type: 'missing',
-          word: refWords[refIdx],
-          timestamp: null,
-          description: `未認識: 「${refWords[refIdx]}」`
-        });
+      let found = false;
+
+      // 完全一致を探す（前後3語の範囲内で）
+      for (let i = recIdx; i < Math.min(recIdx + 3, recWords.length); i++) {
+        if (refWords[refIdx] === recWords[i]) {
+          recIdx = i + 1;
+          found = true;
+          break;
+        }
+      }
+
+      if (!found) {
+        // 完全一致がない場合、部分一致を確認
+        let bestMatch = -1;
+        let bestDistance = Infinity;
+
+        for (let i = recIdx; i < Math.min(recIdx + 3, recWords.length); i++) {
+          const distance = levenshteinDistance(refWords[refIdx], recWords[i]);
+          if (distance < bestDistance) {
+            bestDistance = distance;
+            bestMatch = i;
+          }
+        }
+
+        // 距離が1-2なら部分一致（誤認識）
+        if (bestMatch >= 0 && bestDistance <= 2 && bestDistance > 0) {
+          differences.push({
+            type: 'mismatch',
+            word: refWords[refIdx],
+            recognized: recWords[bestMatch],
+            timestamp: timestamps[bestMatch],
+            description: `誤認識: 『${refWords[refIdx]}』→『${recWords[bestMatch]}』${timestamps[bestMatch] ? ` (${formatTime(timestamps[bestMatch].start)} - ${formatTime(timestamps[bestMatch].end)})` : ''}`
+          });
+          recIdx = bestMatch + 1;
+        } else {
+          // 距離が大きい、または見つからない → 未認識
+          differences.push({
+            type: 'missing',
+            word: refWords[refIdx],
+            timestamp: null,
+            description: `未認識: 『${refWords[refIdx]}』`
+          });
+        }
       }
     }
 
@@ -196,7 +227,7 @@ export default function AudioTextChecker() {
         type: 'extra',
         word: recWords[recIdx],
         timestamp: timestamp,
-        description: `誤認識: 「${recWords[recIdx]}」${timestamp ? ` (${formatTime(timestamp.start)} - ${formatTime(timestamp.end)})` : ''}`
+        description: `過剰認識: 『${recWords[recIdx]}』${timestamp ? ` (${formatTime(timestamp.start)} - ${formatTime(timestamp.end)})` : ''}`
       });
       recIdx++;
     }

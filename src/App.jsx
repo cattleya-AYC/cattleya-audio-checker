@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Compare2, CheckCircle, AlertCircle, Copy } from 'lucide-react';
+import { CheckCircle, AlertCircle, Copy } from 'lucide-react';
 
 export default function TextComparisonChecker() {
   const [text1, setText1] = useState('');

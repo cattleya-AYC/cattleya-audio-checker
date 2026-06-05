@@ -12,6 +12,8 @@ export default function AudioTextChecker() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [showDiff, setShowDiff] = useState(false);
+  const [wordDifferences, setWordDifferences] = useState([]);
+  const [wordTimestamps, setWordTimestamps] = useState([]);
 
   const extractFileId = (url) => {
     const patterns = [
@@ -163,6 +165,52 @@ export default function AudioTextChecker() {
     return matrix[b.length][a.length];
   };
 
+  // 単語レベルの差分を抽出
+  const extractWordDifferences = (refText, recText, timestamps) => {
+    const refWords = normalizeText(refText).split(' ').filter(w => w);
+    const recWords = normalizeText(recText).split(' ').filter(w => w);
+
+    const differences = [];
+
+    // 簡単な単語マッチング（より高度なロジックは後で改善可能）
+    let recIdx = 0;
+    for (let refIdx = 0; refIdx < refWords.length; refIdx++) {
+      if (recIdx < recWords.length && refWords[refIdx] === recWords[recIdx]) {
+        // マッチした
+        recIdx++;
+      } else {
+        // マッチしなかった - 元のテキストにはあるが認識されていない
+        differences.push({
+          type: 'missing',
+          word: refWords[refIdx],
+          timestamp: null,
+          description: `未認識: 「${refWords[refIdx]}」`
+        });
+      }
+    }
+
+    // 認識されたが照合テキストにない単語
+    while (recIdx < recWords.length) {
+      const timestamp = timestamps[recIdx];
+      differences.push({
+        type: 'extra',
+        word: recWords[recIdx],
+        timestamp: timestamp,
+        description: `誤認識: 「${recWords[recIdx]}」${timestamp ? ` (${formatTime(timestamp.start)} - ${formatTime(timestamp.end)})` : ''}`
+      });
+      recIdx++;
+    }
+
+    return differences;
+  };
+
+  // 時間フォーマット (秒 -> MM:SS)
+  const formatTime = (seconds) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
+
   const highlightDifferences = () => {
     const norm1 = normalizeText(referenceText);
     const norm2 = normalizeText(transcribedText);
@@ -212,12 +260,16 @@ export default function AudioTextChecker() {
     setIsLoading(true);
     setError('');
     setTranscribedText('');
+    setWordDifferences([]);
+    setWordTimestamps([]);
 
     try {
       const formData = new FormData();
       formData.append('file', audioFile);
       formData.append('model', 'whisper-1');
       formData.append('language', 'ja');
+      formData.append('response_format', 'verbose_json');
+      formData.append('timestamp_granularities', 'word');
 
       const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
         method: 'POST',
@@ -235,6 +287,14 @@ export default function AudioTextChecker() {
       const data = await response.json();
       const transcribed = data.text;
       setTranscribedText(transcribed);
+
+      // 単語ごとのタイムスタンプを抽出
+      const words = data.words || [];
+      setWordTimestamps(words);
+
+      // 単語レベルの差分を計算
+      const diffs = extractWordDifferences(referenceText, transcribed, words);
+      setWordDifferences(diffs);
 
       const similarity = calculateSimilarity(referenceText, transcribed);
       setMatchPercentage(similarity);
@@ -407,6 +467,39 @@ export default function AudioTextChecker() {
               </p>
             </div>
 
+            {/* 🆕 差分 + タイムスタンプ一覧 */}
+            {wordDifferences.length > 0 && (
+              <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+                <h3 className="text-sm font-semibold text-slate-700 mb-4">
+                  ⏱️ 修正が必要な部分（タイムスタンプ付き）
+                </h3>
+                <div className="space-y-2 max-h-64 overflow-y-auto">
+                  {wordDifferences.map((diff, idx) => (
+                    <div
+                      key={idx}
+                      className={`p-3 rounded border text-sm ${
+                        diff.type === 'missing'
+                          ? 'bg-red-50 border-red-200 text-red-800'
+                          : 'bg-blue-50 border-blue-200 text-blue-800'
+                      }`}
+                    >
+                      <div className="font-semibold">{diff.description}</div>
+                      {diff.timestamp && (
+                        <div className="text-xs mt-1 opacity-75">
+                          {formatTime(diff.timestamp.start)} - {formatTime(diff.timestamp.end)}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                <p className="text-xs text-slate-500 mt-4">
+                  🔴 赤: 未認識（音声では認識されなかった）
+                  <br />
+                  🔵 青: 誤認識（正しくない単語が認識された）
+                </p>
+              </div>
+            )}
+
             <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-sm font-semibold text-slate-700">
@@ -428,7 +521,7 @@ export default function AudioTextChecker() {
             {showDiff && (
               <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
                 <h3 className="text-sm font-semibold text-slate-700 mb-4">
-                  📊 差分ハイライト
+                  📊 差分ハイライト（文字レベル）
                 </h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
@@ -482,7 +575,7 @@ export default function AudioTextChecker() {
         )}
 
         <div className="mt-12 text-center text-xs text-slate-500">
-          <p>設定不要版 • Privacy-first approach</p>
+          <p>設定不要版 • Privacy-first approach • ⏱️ タイムスタンプ付き差分表示</p>
         </div>
       </div>
     </div>

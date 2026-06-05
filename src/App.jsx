@@ -127,9 +127,8 @@ export default function TextComparisonChecker() {
       <div className="max-w-6xl mx-auto">
         <div className="mb-8">
           <div className="flex items-center gap-3 mb-2">
-            <Compare2 className="w-8 h-8 text-blue-600" />
             <h1 className="text-3xl md:text-4xl font-bold text-slate-800">
-              テキスト比較ツール
+              📊 テキスト比較ツール
             </h1>
           </div>
           <p className="text-slate-600">
@@ -203,8 +202,7 @@ export default function TextComparisonChecker() {
           disabled={!text1.trim() || !text2.trim()}
           className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white font-semibold py-3 px-6 rounded-lg transition flex items-center justify-center gap-2 mb-6"
         >
-          <Compare2 className="w-5 h-5" />
-          比較
+          ▶️ 比較
         </button>
 
         {/* 結果 */}

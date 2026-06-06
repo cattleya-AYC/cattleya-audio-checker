@@ -1,120 +1,98 @@
 import React, { useState } from 'react';
-import { Compare2, CheckCircle, AlertCircle, Copy } from 'lucide-react';
+import { Upload, Zap, Copy } from 'lucide-react';
 
-export default function TextComparisonChecker() {
-  const [text1, setText1] = useState('');
-  const [text2, setText2] = useState('');
-  const [matchPercentage, setMatchPercentage] = useState(null);
-  const [showDiff, setShowDiff] = useState(false);
-  const [markedText1, setMarkedText1] = useState([]);
-  const [markedText2, setMarkedText2] = useState([]);
-
-  const normalizeText = (text) => {
-    return text
-      .toLowerCase()
-      .replace(/\s+/g, ' ')
-      .replace(/[、。，。？！]/g, '')
-      .trim();
-  };
-
-  const calculateSimilarity = (t1, t2) => {
-    const norm1 = normalizeText(t1);
-    const norm2 = normalizeText(t2);
-
-    if (norm1 === norm2) return 100;
-
-    const longer = norm1.length > norm2.length ? norm1 : norm2;
-    const shorter = norm1.length > norm2.length ? norm2 : norm1;
-
-    if (longer.length === 0) return 100;
-
-    const editDistance = levenshteinDistance(longer, shorter);
-    return Math.round((1 - editDistance / longer.length) * 100);
-  };
-
-  const levenshteinDistance = (a, b) => {
-    const matrix = [];
-
-    for (let i = 0; i <= b.length; i++) {
-      matrix[i] = [i];
+export default function SimpleAudioTranscriber() {
+  const [apiKey, setApiKey] = useState(() => {
+    try {
+      const saved = localStorage.getItem('openai_api_key');
+      return saved || '';
+    } catch {
+      return '';
     }
+  });
 
-    for (let j = 0; j <= a.length; j++) {
-      matrix[0][j] = j;
-    }
+  const [audioFile, setAudioFile] = useState(null);
+  const [audioFileName, setAudioFileName] = useState('');
+  const [transcribedText, setTranscribedText] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState('');
 
-    for (let i = 1; i <= b.length; i++) {
-      for (let j = 1; j <= a.length; j++) {
-        if (b.charAt(i - 1) === a.charAt(j - 1)) {
-          matrix[i][j] = matrix[i - 1][j - 1];
-        } else {
-          matrix[i][j] = Math.min(
-            matrix[i - 1][j - 1] + 1,
-            matrix[i][j - 1] + 1,
-            matrix[i - 1][j] + 1
-          );
-        }
-      }
-    }
-
-    return matrix[b.length][a.length];
-  };
-
-  const highlightDifferences = () => {
-    const norm1 = normalizeText(text1);
-    const norm2 = normalizeText(text2);
-
-    const chars1 = norm1.split('');
-    const chars2 = norm2.split('');
-
-    let result1 = [];
-    let result2 = [];
-    let i = 0, j = 0;
-
-    while (i < chars1.length || j < chars2.length) {
-      if (i < chars1.length && j < chars2.length && chars1[i] === chars2[j]) {
-        result1.push({ char: chars1[i], match: true });
-        result2.push({ char: chars2[j], match: true });
-        i++;
-        j++;
-      } else if (j >= chars2.length || (i < chars1.length && chars1[i] !== chars2[j])) {
-        result1.push({ char: chars1[i], match: false });
-        i++;
+  // API キーを localStorage に保存
+  const handleApiKeyChange = (e) => {
+    const key = e.target.value;
+    setApiKey(key);
+    try {
+      if (key.trim()) {
+        localStorage.setItem('openai_api_key', key);
       } else {
-        result2.push({ char: chars2[j], match: false });
-        j++;
+        localStorage.removeItem('openai_api_key');
       }
+    } catch {
+      console.error('localStorage に保存できません');
     }
-
-    return { result1, result2 };
   };
 
-  const handleCompare = () => {
-    if (!text1.trim() || !text2.trim()) {
+  // API キーをクリア
+  const clearApiKey = () => {
+    setApiKey('');
+    try {
+      localStorage.removeItem('openai_api_key');
+    } catch {
+      console.error('localStorage から削除できません');
+    }
+  };
+
+  // 音声ファイルアップロード
+  const handleAudioUpload = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      setAudioFile(file);
+      setAudioFileName(file.name);
+      setError('');
+    }
+  };
+
+  // 文字起こし実行
+  const handleTranscribe = async () => {
+    if (!apiKey.trim()) {
+      setError('OpenAI APIキーを入力してください');
       return;
     }
 
-    const similarity = calculateSimilarity(text1, text2);
-    setMatchPercentage(similarity);
+    if (!audioFile) {
+      setError('音声ファイルを選択してください');
+      return;
+    }
 
-    const { result1, result2 } = highlightDifferences();
-    setMarkedText1(result1);
-    setMarkedText2(result2);
-    setShowDiff(true);
-  };
+    setIsLoading(true);
+    setError('');
+    setTranscribedText('');
 
-  const handleTextFileUpload = (fileIndex, event) => {
-    const file = event.target.files[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        if (fileIndex === 1) {
-          setText1(e.target.result);
-        } else {
-          setText2(e.target.result);
-        }
-      };
-      reader.readAsText(file);
+    try {
+      const formData = new FormData();
+      formData.append('file', audioFile);
+      formData.append('model', 'whisper-1');
+      formData.append('language', 'ja');
+
+      const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error?.message || 'Whisper API呼び出しエラー');
+      }
+
+      const data = await response.json();
+      setTranscribedText(data.text);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -124,185 +102,113 @@ export default function TextComparisonChecker() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-slate-100 to-slate-50 p-4 md:p-6">
-      <div className="max-w-6xl mx-auto">
+      <div className="max-w-4xl mx-auto">
         <div className="mb-8">
           <div className="flex items-center gap-3 mb-2">
-            <Compare2 className="w-8 h-8 text-blue-600" />
+            <Zap className="w-8 h-8 text-emerald-600" />
             <h1 className="text-3xl md:text-4xl font-bold text-slate-800">
-              テキスト比較ツール
+              🎤 音声文字起こし
             </h1>
           </div>
           <p className="text-slate-600">
-            2つのテキストを比較して、違いをハイライト表示します
+            音声ファイルを自動で文字に変換します
           </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-          {/* テキスト1 */}
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
-            <label className="block text-sm font-semibold text-slate-700 mb-4">
-              📝 テキスト 1（元のテキスト）
-            </label>
-            <textarea
-              value={text1}
-              onChange={(e) => setText1(e.target.value)}
-              placeholder="照合するテキストを入力またはペースト"
-              className="w-full h-48 px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition text-sm resize-none"
+        {/* API キー設定 */}
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 mb-6">
+          <label className="block text-sm font-semibold text-slate-700 mb-2">
+            OpenAI API キー
+          </label>
+          <div className="flex gap-2">
+            <input
+              type="password"
+              value={apiKey}
+              onChange={handleApiKeyChange}
+              placeholder="sk-..."
+              className="flex-1 px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none transition text-sm"
             />
-            <div className="mt-3">
-              <label className="text-xs text-slate-500 cursor-pointer hover:text-blue-600 transition">
-                <input
-                  type="file"
-                  accept=".txt"
-                  onChange={(e) => handleTextFileUpload(1, e)}
-                  className="hidden"
-                />
-                📎 ファイルアップロード
-              </label>
-            </div>
-            {text1 && (
-              <p className="mt-2 text-xs text-slate-500">
-                文字数: {text1.length}
-              </p>
+            {apiKey && (
+              <button
+                onClick={clearApiKey}
+                className="px-4 py-3 bg-red-50 hover:bg-red-100 text-red-700 font-semibold rounded-lg transition text-sm"
+              >
+                クリア
+              </button>
             )}
           </div>
-
-          {/* テキスト2 */}
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
-            <label className="block text-sm font-semibold text-slate-700 mb-4">
-              📝 テキスト 2（比較対象）
-            </label>
-            <textarea
-              value={text2}
-              onChange={(e) => setText2(e.target.value)}
-              placeholder="比較するテキストを入力またはペースト"
-              className="w-full h-48 px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition text-sm resize-none"
-            />
-            <div className="mt-3">
-              <label className="text-xs text-slate-500 cursor-pointer hover:text-blue-600 transition">
-                <input
-                  type="file"
-                  accept=".txt"
-                  onChange={(e) => handleTextFileUpload(2, e)}
-                  className="hidden"
-                />
-                📎 ファイルアップロード
-              </label>
-            </div>
-            {text2 && (
-              <p className="mt-2 text-xs text-slate-500">
-                文字数: {text2.length}
-              </p>
-            )}
-          </div>
+          <p className="text-xs text-slate-500 mt-2">
+            🔒 APIキーはローカルに保存され、送信されません
+            {apiKey && <span className="ml-2">✅ 保存済み</span>}
+          </p>
         </div>
 
-        {/* 比較ボタン */}
+        {/* 音声ファイルアップロード */}
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 mb-6">
+          <label className="block text-sm font-semibold text-slate-700 mb-4">
+            📁 音声ファイル
+          </label>
+          <div className="relative">
+            <input
+              type="file"
+              accept="audio/*"
+              onChange={handleAudioUpload}
+              className="hidden"
+              id="audio-input"
+            />
+            <label
+              htmlFor="audio-input"
+              className="flex flex-col items-center justify-center w-full p-8 border-2 border-dashed border-slate-300 rounded-lg cursor-pointer hover:border-emerald-500 hover:bg-emerald-50 transition"
+            >
+              <span className="text-3xl mb-2">📤</span>
+              <span className="text-sm font-medium text-slate-600">
+                ファイルを選択またはドラッグ
+              </span>
+            </label>
+          </div>
+
+          {audioFile && (
+            <p className="mt-4 text-sm text-emerald-700">
+              ✅ {audioFileName}
+            </p>
+          )}
+        </div>
+
+        {/* エラー表示 */}
+        {error && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
+            <p className="text-sm text-red-700">{error}</p>
+          </div>
+        )}
+
+        {/* 文字起こしボタン */}
         <button
-          onClick={handleCompare}
-          disabled={!text1.trim() || !text2.trim()}
-          className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white font-semibold py-3 px-6 rounded-lg transition flex items-center justify-center gap-2 mb-6"
+          onClick={handleTranscribe}
+          disabled={isLoading || !audioFile || !apiKey.trim()}
+          className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-semibold py-3 px-6 rounded-lg transition flex items-center justify-center gap-2 mb-6"
         >
-          <Compare2 className="w-5 h-5" />
-          比較
+          <Upload className="w-5 h-5" />
+          {isLoading ? '処理中...' : '文字起こし開始'}
         </button>
 
-        {/* 結果 */}
-        {matchPercentage !== null && (
-          <div className="space-y-6">
-            {/* スコア */}
-            <div className="bg-gradient-to-r from-blue-50 to-cyan-50 rounded-xl shadow-sm border border-blue-200 p-6">
-              <div className="flex items-center justify-between mb-4">
-                <span className="text-sm font-semibold text-slate-700">
-                  一致度
-                </span>
-                <span
-                  className={`text-4xl font-bold ${
-                    matchPercentage >= 90
-                      ? 'text-emerald-600'
-                      : matchPercentage >= 70
-                      ? 'text-amber-600'
-                      : 'text-red-600'
-                  }`}
-                >
-                  {matchPercentage}%
-                </span>
-              </div>
-              <div className="w-full bg-slate-200 rounded-full h-3 overflow-hidden">
-                <div
-                  className={`h-full transition-all ${
-                    matchPercentage >= 90
-                      ? 'bg-emerald-600'
-                      : matchPercentage >= 70
-                      ? 'bg-amber-500'
-                      : 'bg-red-500'
-                  }`}
-                  style={{ width: `${matchPercentage}%` }}
-                />
-              </div>
-              <p className="text-xs text-slate-600 mt-3">
-                {matchPercentage >= 90
-                  ? '✅ ほぼ完全に一致しています'
-                  : matchPercentage >= 70
-                  ? '⚠️ 部分的な相違があります'
-                  : '❌ 大きな相違があります'}
-              </p>
+        {/* 結果表示 */}
+        {transcribedText && (
+          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-sm font-semibold text-slate-700">
+                📝 文字起こし結果
+              </h2>
+              <button
+                onClick={() => copyToClipboard(transcribedText)}
+                className="text-xs px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded transition flex items-center gap-1"
+              >
+                <Copy className="w-4 h-4" />
+                コピー
+              </button>
             </div>
-
-            {/* 差分ハイライト */}
-            {showDiff && (
-              <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
-                <h3 className="text-sm font-semibold text-slate-700 mb-4">
-                  📊 差分ハイライト
-                </h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <p className="text-xs font-semibold text-slate-600 mb-2">
-                      テキスト 1
-                    </p>
-                    <div className="bg-slate-50 p-4 rounded border border-slate-200 text-sm leading-relaxed overflow-y-auto max-h-64">
-                      {markedText1.map((item, idx) => (
-                        <span
-                          key={idx}
-                          className={
-                            item.match
-                              ? 'text-slate-700'
-                              : 'bg-red-200 text-red-900 font-semibold'
-                          }
-                        >
-                          {item.char}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div>
-                    <p className="text-xs font-semibold text-slate-600 mb-2">
-                      テキスト 2
-                    </p>
-                    <div className="bg-slate-50 p-4 rounded border border-slate-200 text-sm leading-relaxed overflow-y-auto max-h-64">
-                      {markedText2.map((item, idx) => (
-                        <span
-                          key={idx}
-                          className={
-                            item.match
-                              ? 'text-slate-700'
-                              : 'bg-blue-200 text-blue-900 font-semibold'
-                          }
-                        >
-                          {item.char}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-                <p className="text-xs text-slate-500 mt-4">
-                  🔴 赤 = テキスト 1 にあるが、テキスト 2 にない部分
-                  <br />
-                  🔵 青 = テキスト 2 にあるが、テキスト 1 にない部分
-                </p>
-              </div>
-            )}
+            <div className="bg-slate-50 p-4 rounded border border-slate-200 text-sm leading-relaxed whitespace-pre-wrap">
+              {transcribedText}
+            </div>
           </div>
         )}
 
